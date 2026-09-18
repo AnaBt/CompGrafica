@@ -32,11 +32,13 @@ class Transformacoes:
         return resultado
 
 class ObjetoGrafico:
-    def __init__(self, nome, tipo, vertices, cor="#1a73e8"):
+    def __init__(self, nome, tipo, vertices, cor="#1a73e8", preenchido=False, cor_preenchimento="#8ab4f8"):
         self.nome = nome
-        self.tipo = tipo
+        self.tipo = tipo  # "ponto", "reta", "wireframe" / "poligono"
         self.vertices = vertices
         self.cor = cor
+        self.preenchido = preenchido
+        self.cor_preenchimento = cor_preenchimento
 
     def transformar(self, matriz):
         novos_vertices = []
@@ -70,11 +72,13 @@ class DescritorOBJ:
                 for v in obj.vertices:
                     f.write(f"v {v[0]} {v[1]} 0.0\n")
                 
-                f.write("l ")
+                # Se for preenchido usa 'f' (face), caso contrário usa 'l' (linha/wireframe)
+                prefixo = "f " if (obj.preenchido and obj.tipo == "wireframe") else "l "
+                f.write(prefixo)
                 for i in range(len(obj.vertices)):
                     f.write(f"{offset + i} ")
-                if obj.tipo in ["wireframe", "triangulo"]:
-                    f.write(f"{offset}") # Fecha polígono
+                if not obj.preenchido and obj.tipo in ["wireframe", "triangulo"]:
+                    f.write(f"{offset}") # Fecha o polígono no modo linha
                 f.write("\n")
                 offset += len(obj.vertices)
 
@@ -97,7 +101,8 @@ class DescritorOBJ:
                         indices = [int(i.split('/')[0]) - 1 for i in partes[1:]]
                         v_obj = [vertices_globais[i] for i in indices]
                         tipo = "ponto" if len(v_obj) == 1 else "reta" if len(v_obj) == 2 else "wireframe"
-                        objetos.append(ObjetoGrafico(nome_atual, tipo, v_obj))
+                        preenchido = (partes[0] == 'f')
+                        objetos.append(ObjetoGrafico(nome_atual, tipo, v_obj, preenchido=preenchido))
                         nome_atual = f"Obj_{len(objetos)+1}"
             return objetos
         except Exception:
