@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import messagebox, colorchooser, filedialog
-from modelo import ObjetoGrafico, DisplayFile, Transformacoes, DescritorOBJ
+from modelo import ObjetoGrafico, DisplayFile, Transformacoes, DescritorOBJ, BSpline
 from view import Window, Viewport
 
 class InterfaceGrafica:
@@ -25,7 +25,7 @@ class InterfaceGrafica:
         tk.Label(self.painel, text="Objetos (Mundo)", bg="#f0f0f0", font=("Arial", 10, "bold")).pack(pady=5)
         tk.Button(self.painel, text="+ Novo Objeto", bg="#1a73e8", fg="white", command=self.abrir_popup_novo_objeto).pack(pady=2, fill="x")
         tk.Button(self.painel, text="Transformar Objeto", bg="#34a853", fg="white", command=self.abrir_popup_transformar).pack(pady=2, fill="x")
-        
+
         frame_io = tk.Frame(self.painel, bg="#f0f0f0")
         frame_io.pack(pady=5, fill="x")
         tk.Button(frame_io, text="Exportar .OBJ", command=self.exportar_obj).pack(side="left", expand=True, fill="x", padx=1)
@@ -87,71 +87,45 @@ class InterfaceGrafica:
             for o in objetos: self.display_file.adicionar(o)
             self.atualizar_lista()
             self.desenhar()
-    def centralizar_window(self):
-        if not self.display_file.objetos:
-            return
-
-        # Inicializa limites ao infinito
-        min_x, min_y = float('inf'), float('inf')
-        max_x, max_y = float('-inf'), float('-inf')
-
-        # Varre todos os vértices de todos os objetos para achar a Bounding Box do mundo
-        for obj in self.display_file.objetos:
-            for x, y in obj.vertices:
-                if x < min_x: min_x = x
-                if x > max_x: max_x = x
-                if y < min_y: min_y = y
-                if y > max_y: max_y = y
-
-        # Evita divisão por zero caso seja apenas um ponto no mundo
-        largura_mundo = (max_x - min_x) if max_x != min_x else 100
-        altura_mundo = (max_y - min_y) if max_y != min_y else 100
-
-        # Define o centro da Window para o centro exato da Bounding Box
-        self.window.cx = (min_x + max_x) / 2
-        self.window.cy = (min_y + max_y) / 2
-        
-        # Aplica uma margem de segurança (20%) para os objetos não colarem na borda
-        self.window.largura = largura_mundo * 1.2
-        self.window.altura = altura_mundo * 1.2
-        self.window.angulo = 0  # Remove rotações para alinhar a visualização
-        
-        self.desenhar()
         
     def desenhar(self):
         self.canvas.delete("forma", "ponto")
-        
-        # Pega a matriz de transformação do Mundo -> SCN
         matriz_cam = self.window.matriz_scn()
 
         def converter_desenhar_ponto(x_mundo, y_mundo):
-            # Transforma WC -> SCN
             x_scn = matriz_cam[0][0]*x_mundo + matriz_cam[0][1]*y_mundo + matriz_cam[0][2]*1
             y_scn = matriz_cam[1][0]*x_mundo + matriz_cam[1][1]*y_mundo + matriz_cam[1][2]*1
-            # Transforma SCN -> Viewport
             return self.viewport.transformar_scn(x_scn, y_scn)
 
         # Desenhar Origem do Mundo (0,0)
         xvp, yvp = converter_desenhar_ponto(0, 0)
         self.canvas.create_oval(xvp-3, yvp-3, xvp+3, yvp+3, fill="black", tags="ponto")
 
-        # Desenhar Objetos via Cache visual (Não altera o Display File)
+        # CORREÇÃO 2: Renderização diferenciada para B-Splines / Curvas abertas
         for obj in self.display_file.objetos:
             qtd_vertices = len(obj.vertices)
-            for i in range(qtd_vertices):
-                x1, y1 = obj.vertices[i]
-                
-                if obj.tipo == "ponto":
-                    x2, y2 = x1, y1
-                elif obj.tipo == "reta":
-                    if i == 1: break 
-                    x2, y2 = obj.vertices[1]
-                else:
-                    x2, y2 = obj.vertices[(i + 1) % qtd_vertices]
+            if qtd_vertices == 0:
+                continue
 
-                x1vp, y1vp = converter_desenhar_ponto(x1, y1)
-                x2vp, y2vp = converter_desenhar_ponto(x2, y2)
-                self.canvas.create_line(x1vp, y1vp, x2vp, y2vp, tags="forma", fill=obj.cor, width=2)
+            if obj.tipo == "ponto":
+                xvp, yvp = converter_desenhar_ponto(obj.vertices[0][0], obj.vertices[0][1])
+                self.canvas.create_oval(xvp-2, yvp-2, xvp+2, yvp+2, fill=obj.cor, tags="forma")
+            
+            elif obj.tipo in ["bspline", "curva", "reta"]:
+                for i in range(qtd_vertices - 1):
+                    x1, y1 = obj.vertices[i]
+                    x2, y2 = obj.vertices[i + 1]
+                    x1vp, y1vp = converter_desenhar_ponto(x1, y1)
+                    x2vp, y2vp = converter_desenhar_ponto(x2, y2)
+                    self.canvas.create_line(x1vp, y1vp, x2vp, y2vp, tags="forma", fill=obj.cor, width=2)
+            
+            else:  # Wireframes e polígonos fechados
+                for i in range(qtd_vertices):
+                    x1, y1 = obj.vertices[i]
+                    x2, y2 = obj.vertices[(i + 1) % qtd_vertices]
+                    x1vp, y1vp = converter_desenhar_ponto(x1, y1)
+                    x2vp, y2vp = converter_desenhar_ponto(x2, y2)
+                    self.canvas.create_line(x1vp, y1vp, x2vp, y2vp, tags="forma", fill=obj.cor, width=2)
 
     def atualizar_lista(self):
         self.lista_objetos.delete(0, tk.END)
@@ -161,18 +135,32 @@ class InterfaceGrafica:
     def abrir_popup_novo_objeto(self):
         popup = tk.Toplevel(self.root)
         popup.title("Novo Objeto")
-        popup.geometry("350x300")
+        popup.geometry("380x380")
         popup.grab_set()
 
         tk.Label(popup, text="Nome do Objeto:", font=("Arial", 9, "bold")).pack(anchor="w", padx=15, pady=(10, 0))
         e_nome = tk.Entry(popup, font=("Arial", 10))
         e_nome.pack(fill="x", padx=15, pady=2)
 
+        tk.Label(popup, text="Tipo de Objeto:", font=("Arial", 9, "bold")).pack(anchor="w", padx=15, pady=(10, 0))
+        tipo_var = tk.StringVar(value="auto")
+        combo_tipo = tk.OptionMenu(
+            popup, tipo_var, 
+            "auto", "bspline",
+            command=lambda v: label_dica.config(
+                text="Mínimo de 4 pontos para B-Spline!" if v == "bspline" else "Ex: (100,100),(200,200)"
+            )
+        )
+        combo_tipo.pack(fill="x", padx=15, pady=2)
+
         tk.Label(popup, text="Coordenadas: (x1,y1),(x2,y2)...", font=("Arial", 9, "bold")).pack(anchor="w", padx=15, pady=(10, 0))
         e_coords = tk.Entry(popup, font=("Arial", 10))
         e_coords.pack(fill="x", padx=15, pady=2)
 
-        tk.Label(popup, text="Cor da Borda:", font=("Arial", 9, "bold")).pack(anchor="w", padx=15, pady=(10, 0))
+        label_dica = tk.Label(popup, text="Ex: (100,100),(200,200)", font=("Arial", 8, "italic"), fg="gray")
+        label_dica.pack(anchor="w", padx=15)
+
+        tk.Label(popup, text="Cor:", font=("Arial", 9, "bold")).pack(anchor="w", padx=15, pady=(10, 0))
         cor_selecionada = ["#1a73e8"]
         
         def escolher_cor():
@@ -194,17 +182,32 @@ class InterfaceGrafica:
                 
             try:
                 pontos = list(eval(f"[{raw_coords}]"))
-                if len(pontos) == 1: tipo = "ponto"
-                elif len(pontos) == 2: tipo = "reta"
-                else: tipo = "wireframe"
+                
+                if not all(isinstance(p, tuple) and len(p) == 2 for p in pontos):
+                    raise ValueError("Formato de ponto inválido")
+
+                tipo_selecionado = tipo_var.get()
+
+                if tipo_selecionado == "bspline":
+                    if len(pontos) < 4:
+                        messagebox.showwarning("Aviso B-Spline", "Uma B-Spline exige pelo menos 4 pontos de controle!")
+                        return
                     
-                novo_obj = ObjetoGrafico(nome, tipo, pontos, cor_selecionada[0])
+                    novo_obj = BSpline(nome, pontos, cor_selecionada[0])
+                else:
+                    if len(pontos) == 1: tipo = "ponto"
+                    elif len(pontos) == 2: tipo = "reta"
+                    else: tipo = "wireframe"
+
+                    novo_obj = ObjetoGrafico(nome, tipo, pontos, cor_selecionada[0])
+
                 self.display_file.adicionar(novo_obj)
                 self.atualizar_lista()
                 self.desenhar()
                 popup.destroy()
+
             except Exception:
-                messagebox.showerror("Erro", "Formato incorreto!\nExemplo: (100,100),(200,200)")
+                messagebox.showerror("Erro de Formato", "Use o padrão correto de coordenadas:\n(x1,y1),(x2,y2),(x3,y3)...")
 
         tk.Button(popup, text="Salvar Objeto", bg="#1a73e8", fg="white", font=("Arial", 9, "bold"), command=salvar).pack(pady=15)
 
@@ -221,7 +224,7 @@ class InterfaceGrafica:
         popup.geometry("300x480")
         popup.grab_set()
 
-        # ----- TRANSLAÇÃO -----
+        # Translação
         tk.Label(popup, text="Translação", font=("Arial", 10, "bold")).pack(pady=(10,0))
         f_t = tk.Frame(popup)
         f_t.pack()
@@ -239,7 +242,7 @@ class InterfaceGrafica:
             
         tk.Button(popup, text="Aplicar Translação", command=aplicar_translacao).pack(pady=2)
 
-        # ----- ESCALA -----
+        # Escala
         tk.Label(popup, text="Escalonamento (Centro)", font=("Arial", 10, "bold")).pack(pady=(15,0))
         f_e = tk.Frame(popup)
         f_e.pack()
@@ -262,7 +265,7 @@ class InterfaceGrafica:
 
         tk.Button(popup, text="Aplicar Escala", command=aplicar_escala).pack(pady=2)
 
-        # ----- ROTAÇÃO -----
+        # Rotação
         tk.Label(popup, text="Rotação (Graus)", font=("Arial", 10, "bold")).pack(pady=(15,0))
         e_ang = tk.Entry(popup, width=10)
         e_ang.pack()
@@ -300,9 +303,6 @@ class InterfaceGrafica:
             except ValueError: messagebox.showerror("Erro", "Valores inválidos")
 
         tk.Button(popup, text="Aplicar Rotação", command=aplicar_rotacao).pack(pady=2)
-        # Adicione este botão dentro do método setup_ui(self), no bloco do "self.painel":
-        tk.Button(self.painel, text="[ Centralizar Visão ]", bg="#fbbc05", fg="black", font=("Arial", 9, "bold"),
-                command=self.centralizar_window).pack(pady=10, fill="x", padx=5)
 
 if __name__ == "__main__":
     root = tk.Tk()
