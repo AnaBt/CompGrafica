@@ -19,13 +19,11 @@ def _calcular_codigo(x, y, xmin=-1.0, ymin=-1.0, xmax=1.0, ymax=1.0):
         code |= TOP
     return code
 
-# 1. Clipagem de Ponto
 def clip_ponto(x, y, xmin=-1.0, ymin=-1.0, xmax=1.0, ymax=1.0):
     if xmin <= x <= xmax and ymin <= y <= ymax:
         return (x, y)
     return None
 
-# 2. Clipagem de Reta - Cohen-Sutherland
 def clip_reta_cohen_sutherland(x1, y1, x2, y2, xmin=-1.0, ymin=-1.0, xmax=1.0, ymax=1.0):
     code1 = _calcular_codigo(x1, y1, xmin, ymin, xmax, ymax)
     code2 = _calcular_codigo(x2, y2, xmin, ymin, xmax, ymax)
@@ -94,7 +92,6 @@ def clip_reta_liang_barsky(x1, y1, x2, y2, xmin=-1.0, ymin=-1.0, xmax=1.0, ymax=
 
     return (nx1, ny1, nx2, ny2)
 
-# 4. Clipagem de Polígono - Sutherland-Hodgman
 def clip_poligono_sutherland_hodgman(polygon, xmin=-1.0, ymin=-1.0, xmax=1.0, ymax=1.0):
     if not polygon:
         return []
@@ -143,3 +140,25 @@ def clip_poligono_sutherland_hodgman(polygon, xmin=-1.0, ymin=-1.0, xmax=1.0, ym
             s = p
 
     return output_list
+
+def clip_curva(vertices, xmin=-1.0, ymin=-1.0, xmax=1.0, ymax=1.0):
+    """
+    Aplica o clipping na sequência de segmentos de reta que compõem a curva.
+    Retorna uma lista de segmentos recortados visíveis: [[(x1, y1), (x2, y2)], ...]
+    """
+    if not vertices or len(vertices) < 2:
+        return []
+
+    segmentos_visiveis = []
+
+    for i in range(len(vertices) - 1):
+        x1, y1 = vertices[i]
+        x2, y2 = vertices[i + 1]
+
+        # Utiliza o algoritmo de Cohen-Sutherland para clipar cada segmento individual
+        res = clip_reta_cohen_sutherland(x1, y1, x2, y2, xmin, ymin, xmax, ymax)
+        if res is not None:
+            nx1, ny1, nx2, ny2 = res
+            segmentos_visiveis.append([(nx1, ny1), (nx2, ny2)])
+
+    return segmentos_visiveis

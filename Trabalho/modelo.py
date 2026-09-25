@@ -34,7 +34,7 @@ class Transformacoes:
 class ObjetoGrafico:
     def __init__(self, nome, tipo, vertices, cor="#1a73e8", preenchido=False, cor_preenchimento="#8ab4f8"):
         self.nome = nome
-        self.tipo = tipo  # "ponto", "reta", "wireframe" / "poligono"
+        self.tipo = tipo  # "ponto", "reta", "wireframe" / "poligono", "curva"
         self.vertices = vertices
         self.cor = cor
         self.preenchido = preenchido
@@ -54,6 +54,60 @@ class ObjetoGrafico:
         cy = sum(v[1] for v in self.vertices) / len(self.vertices)
         return cx, cy
 
+class Curva2D(ObjetoGrafico):
+    def __init__(self, nome, pontos_controle, passos=20, cor="#1a73e8"):
+        """
+        pontos_controle: Lista de tuplas/pontos [(P0), (P1), (V0), (V1), ...]
+        passos: Número de divisões/segmentos por sub-curva de Hermite
+        """
+        self.pontos_controle = pontos_controle
+        self.algoritmo = "hermite"
+        self.passos = passos
+        
+        # Gera os vértices aproximados (segmentos de reta) para renderização
+        vertices_gerados = self.gerar_pontos_curva()
+        
+        super().__init__(nome=nome, tipo="curva", vertices=vertices_gerados, cor=cor)
+
+    def transformar(self, matriz):
+        novos_pc = []
+        for x, y in self.pontos_controle:
+            nx = matriz[0][0]*x + matriz[0][1]*y + matriz[0][2]*1
+            ny = matriz[1][0]*x + matriz[1][1]*y + matriz[1][2]*1
+            novos_pc.append((nx, ny))
+        self.pontos_controle = novos_pc
+        self.vertices = self.gerar_pontos_curva()
+
+    def gerar_pontos_curva(self):
+        if len(self.pontos_controle) < 4:
+            return list(self.pontos_controle)
+
+        vertices = []
+        
+        # Agrupa de 4 em 4: P0 (ponto inicial), P1 (ponto final), V0 (vetor tangente inicial), V1 (vetor tangente final)
+        # Para continuidade G(0), a sub-curva seguinte é formada a partir dos próximos pontos
+        i = 0
+        while i + 3 < len(self.pontos_controle):
+            p0, p1, v0, v1 = self.pontos_controle[i:i+4]
+            for step in range(self.passos + 1):
+                t = step / float(self.passos)
+                
+                # Funções de blending de Hermite
+                h1 = 2*(t**3) - 3*(t**2) + 1
+                h2 = -2*(t**3) + 3*(t**2)
+                h3 = t**3 - 2*(t**2) + t
+                h4 = t**3 - t**2
+                
+                x = h1 * p0[0] + h2 * p1[0] + h3 * v0[0] + h4 * v1[0]
+                y = h1 * p0[1] + h2 * p1[1] + h3 * v0[1] + h4 * v1[1]
+                
+                if step == 0 and len(vertices) > 0:
+                    continue
+                vertices.append((x, y))
+            i += 3
+
+        return vertices
+
 class DisplayFile:
     def __init__(self):
         self.objetos = []
@@ -72,13 +126,12 @@ class DescritorOBJ:
                 for v in obj.vertices:
                     f.write(f"v {v[0]} {v[1]} 0.0\n")
                 
-                # Se for preenchido usa 'f' (face), caso contrário usa 'l' (linha/wireframe)
                 prefixo = "f " if (obj.preenchido and obj.tipo == "wireframe") else "l "
                 f.write(prefixo)
                 for i in range(len(obj.vertices)):
                     f.write(f"{offset + i} ")
                 if not obj.preenchido and obj.tipo in ["wireframe", "triangulo"]:
-                    f.write(f"{offset}") # Fecha o polígono no modo linha
+                    f.write(f"{offset}")
                 f.write("\n")
                 offset += len(obj.vertices)
 
